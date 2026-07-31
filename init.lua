@@ -10,7 +10,9 @@ local missionControlExitDelay = 0.15
 local spaceSwitchTimeout = 2.0
 local spaceSwitchPollInterval = 0.05
 local nearlyFullScreenRatio = 0.9
+local doublePressInterval = 0.2
 local jumpGeneration = 0
+local pendingJumpTimers = {}
 
 local function windowDescription(win)
     local app = win:application()
@@ -119,7 +121,7 @@ local function moveMouseToWindowCenter(win)
     })
 end
 
-local function moveActiveWindowToMouse(win)
+local function moveWindowToMouse(win)
     local mousePosition = hs.mouse.absolutePosition()
     local frame = win:frame()
     local sourceScreen = win:screen()
@@ -273,14 +275,6 @@ local function jumpToWindow(slot)
         return
     end
 
-    local focusedWindow = hs.window.focusedWindow()
-    if focusedWindow and focusedWindow:id() == win:id() then
-        -- 再次跳转到当前窗口：将窗口移动到鼠标所在显示器。
-        jumpGeneration = jumpGeneration + 1
-        moveActiveWindowToMouse(win)
-        return
-    end
-
     -- 窗口可能被用户移动到了另一个 Space，切换前重新读取
     local currentWindowSpaces = hs.spaces.windowSpaces(win)
 
@@ -319,6 +313,79 @@ local function jumpToWindow(slot)
     end)
 end
 
+local function moveSavedWindowToMouse(slot)
+    local saved = slots[slot]
+
+    if not saved then
+        hs.alert.show(
+            "窗口 " .. keys[slot]:upper() .. " 尚未登记"
+        )
+        return
+    end
+
+    local win = saved.window
+    if not win or not win:application() then
+        slots[slot] = nil
+        hs.alert.show(
+            "窗口 " .. keys[slot]:upper() .. " 已关闭，请重新登记"
+        )
+        return
+    end
+
+    if win:isMinimized() then
+        win:unminimize()
+    end
+
+    jumpGeneration = jumpGeneration + 1
+    local generation = jumpGeneration
+    local mouseScreen = hs.mouse.getCurrentScreen()
+    local targetSpace = mouseScreen and
+        (hs.spaces.activeSpaces() or {})[mouseScreen:getUUID()] or nil
+    local windowSpaces = hs.spaces.windowSpaces(win)
+
+    local function finishMove()
+        if generation ~= jumpGeneration then
+            return
+        end
+
+        moveWindowToMouse(win)
+        win:raise()
+        win:focus()
+    end
+
+    if targetSpace and not contains(windowSpaces, targetSpace) then
+        local ok = hs.spaces.moveWindowToSpace(win, targetSpace)
+        if not ok then
+            hs.alert.show("无法把窗口移动到鼠标所在桌面")
+            return
+        end
+
+        -- 给 macOS 一点时间完成 Space 归属变更，再调整跨屏坐标。
+        hs.timer.doAfter(0.05, finishMove)
+        return
+    end
+
+    finishMove()
+end
+
+local function handleJumpKey(slot)
+    local pendingTimer = pendingJumpTimers[slot]
+
+    if pendingTimer then
+        -- 0.2 秒内第二次按下：取消单击，改为让窗口找鼠标。
+        pendingTimer:stop()
+        pendingJumpTimers[slot] = nil
+        moveSavedWindowToMouse(slot)
+        return
+    end
+
+    -- 延迟执行单击，给第二次按键留出判断时间。
+    pendingJumpTimers[slot] = hs.timer.doAfter(doublePressInterval, function()
+        pendingJumpTimers[slot] = nil
+        jumpToWindow(slot)
+    end)
+end
+
 
 for slot, key in ipairs(keys) do
     hs.hotkey.bind(assignMods, key, function()
@@ -326,7 +393,7 @@ for slot, key in ipairs(keys) do
     end)
 
     hs.hotkey.bind(jumpMods, key, function()
-        jumpToWindow(slot)
+        handleJumpKey(slot)
     end)
 end
 
