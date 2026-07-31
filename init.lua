@@ -9,6 +9,7 @@ local keys = { "q", "w", "e", "r", "1", "2", "3", "4" }
 local missionControlExitDelay = 0.15
 local spaceSwitchTimeout = 2.0
 local spaceSwitchPollInterval = 0.05
+local nearlyFullScreenRatio = 0.9
 local jumpGeneration = 0
 
 local function windowDescription(win)
@@ -110,16 +111,7 @@ local function isSpaceVisible(spaceID)
     return false
 end
 
-local function moveMouseToWindowIfNeeded(win, mouseScreenUUID)
-    local targetScreen = win:screen()
-
-    -- 如果鼠标已经在目标窗口所在屏幕，则不移动鼠标
-    -- if not mouseScreenUUID or
-    --     not targetScreen or
-    --     targetScreen:getUUID() == mouseScreenUUID then
-    --     return
-    -- end
-
+local function moveMouseToWindowCenter(win)
     local frame = win:frame()
     hs.mouse.absolutePosition({
         x = frame.x + frame.w / 2,
@@ -127,11 +119,102 @@ local function moveMouseToWindowIfNeeded(win, mouseScreenUUID)
     })
 end
 
+local function moveActiveWindowToMouse(win)
+    local mousePosition = hs.mouse.absolutePosition()
+    local frame = win:frame()
+    local sourceScreen = win:screen()
+    local targetScreen = hs.mouse.getCurrentScreen()
+    local isCrossScreen = sourceScreen and
+        targetScreen and
+        sourceScreen:getUUID() ~= targetScreen:getUUID()
+
+    if isCrossScreen then
+        -- frame() 是目标显示器扣除 macOS 菜单栏和 Dock 后的可用区域。
+        local targetFrame = targetScreen:frame()
+
+        if frame.w > targetFrame.w or frame.h > targetFrame.h then
+            -- 原窗口在目标显示器放不下时，改为可用区域铺满。
+            win:setFrame(targetFrame, 0)
+            moveMouseToWindowCenter(win)
+            return
+        end
+
+        -- 保留原尺寸和尽可能靠近鼠标的中心位置，同时保证整个窗口
+        -- 都位于目标显示器的可用区域内。
+        local x = mousePosition.x - frame.w / 2
+        local y = mousePosition.y - frame.h / 2
+        x = math.max(targetFrame.x, math.min(
+            x,
+            targetFrame.x + targetFrame.w - frame.w
+        ))
+        y = math.max(targetFrame.y, math.min(
+            y,
+            targetFrame.y + targetFrame.h - frame.h
+        ))
+
+        win:setFrame({
+            x = x,
+            y = y,
+            w = frame.w,
+            h = frame.h,
+        }, 0)
+        moveMouseToWindowCenter(win)
+        return
+    end
+
+    if sourceScreen then
+        local usableFrame = sourceScreen:frame()
+        local windowArea = frame.w * frame.h
+        local usableArea = usableFrame.w * usableFrame.h
+
+        -- 同屏且窗口已经使用至少 90% 的可用面积时，不移动窗口或鼠标。
+        if usableArea > 0 and
+            windowArea / usableArea >= nearlyFullScreenRatio then
+            return
+        end
+    end
+
+    -- 同屏移动也限制在可用区域内，保证窗口不会因为鼠标靠近
+    -- 屏幕边缘而有一部分落到屏幕外。
+    local movementScreen = targetScreen or sourceScreen
+    if not movementScreen then
+        return
+    end
+
+    local targetFrame = movementScreen:frame()
+    local x = mousePosition.x - frame.w / 2
+    local y = mousePosition.y - frame.h / 2
+
+    -- 极少数非近似全屏窗口可能单边尺寸仍超过屏幕；这种情况下
+    -- 也缩放到可用区域，才能保证整个窗口可见。
+    if frame.w > targetFrame.w or frame.h > targetFrame.h then
+        win:setFrame(targetFrame, 0)
+        moveMouseToWindowCenter(win)
+        return
+    end
+
+    x = math.max(targetFrame.x, math.min(
+        x,
+        targetFrame.x + targetFrame.w - frame.w
+    ))
+    y = math.max(targetFrame.y, math.min(
+        y,
+        targetFrame.y + targetFrame.h - frame.h
+    ))
+
+    win:setFrame({
+        x = x,
+        y = y,
+        w = frame.w,
+        h = frame.h,
+    }, 0)
+    moveMouseToWindowCenter(win)
+end
+
 local function focusWhenSpaceIsReady(
     slot,
     generation,
-    startedAt,
-    mouseScreenUUID
+    startedAt
 )
     -- 连续按多个跳转键时，让先前跳转产生的定时器自动失效
     if generation ~= jumpGeneration then
@@ -145,7 +228,7 @@ local function focusWhenSpaceIsReady(
 
     if isSpaceVisible(saved.spaceID) then
         focusSavedWindow(slot)
-        moveMouseToWindowIfNeeded(saved.window, mouseScreenUUID)
+        moveMouseToWindowCenter(saved.window)
 
         -- 某些应用第一次 focus 会被 Space 动画吞掉，再补一次
         hs.timer.doAfter(0.1, function()
@@ -165,8 +248,7 @@ local function focusWhenSpaceIsReady(
         focusWhenSpaceIsReady(
             slot,
             generation,
-            startedAt,
-            mouseScreenUUID
+            startedAt
         )
     end)
 end
@@ -191,6 +273,14 @@ local function jumpToWindow(slot)
         return
     end
 
+    local focusedWindow = hs.window.focusedWindow()
+    if focusedWindow and focusedWindow:id() == win:id() then
+        -- 再次跳转到当前窗口：将窗口移动到鼠标所在显示器。
+        jumpGeneration = jumpGeneration + 1
+        moveActiveWindowToMouse(win)
+        return
+    end
+
     -- 窗口可能被用户移动到了另一个 Space，切换前重新读取
     local currentWindowSpaces = hs.spaces.windowSpaces(win)
 
@@ -200,8 +290,6 @@ local function jumpToWindow(slot)
 
     jumpGeneration = jumpGeneration + 1
     local generation = jumpGeneration
-    local mouseScreen = hs.mouse.getCurrentScreen()
-    local mouseScreenUUID = mouseScreen and mouseScreen:getUUID() or nil
 
     -- 若当前停在 Mission Control，先退出；不在其中时调用也是安全的。
     -- 给退出动画一点启动时间，避免 gotoSpace() 被 Mission Control 吞掉。
@@ -226,8 +314,7 @@ local function jumpToWindow(slot)
         focusWhenSpaceIsReady(
             slot,
             generation,
-            hs.timer.secondsSinceEpoch(),
-            mouseScreenUUID
+            hs.timer.secondsSinceEpoch()
         )
     end)
 end
