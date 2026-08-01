@@ -15,6 +15,7 @@ local jumpGeneration = 0
 local pendingJumpTimers = {}
 local pendingFractionTimers = {}
 local windowUndoStacks = {}
+local scaleFactors = { 0.9, 1 / 0.9 }
 
 local function windowDescription(win)
     local app = win:application()
@@ -50,11 +51,58 @@ local function framesAreEqual(a, b)
         math.abs(a.h - b.h) < epsilon
 end
 
+local function constrainWindowFrameToScreen(win, requestedFrame)
+    local center = {
+        x = requestedFrame.x + requestedFrame.w / 2,
+        y = requestedFrame.y + requestedFrame.h / 2,
+    }
+    local screen = hs.screen.find(center) or win:screen()
+
+    if not screen then
+        return requestedFrame
+    end
+
+    local screenFrame = screen:frame()
+    local width = math.min(requestedFrame.w, screenFrame.w)
+    local height = math.min(requestedFrame.h, screenFrame.h)
+    local x = math.max(screenFrame.x, math.min(
+        requestedFrame.x,
+        screenFrame.x + screenFrame.w - width
+    ))
+    local y = math.max(screenFrame.y, math.min(
+        requestedFrame.y,
+        screenFrame.y + screenFrame.h - height
+    ))
+
+    return {
+        x = x,
+        y = y,
+        w = width,
+        h = height,
+    }
+end
+
+local function applyConstrainedWindowFrame(win, requestedFrame)
+    local constrainedFrame = constrainWindowFrameToScreen(
+        win,
+        requestedFrame
+    )
+    win:setFrame(constrainedFrame, 0)
+
+    -- 某些应用会自行修正请求的尺寸；再根据实际结果检查一次边界。
+    local actualFrame = win:frame()
+    local correctedFrame = constrainWindowFrameToScreen(win, actualFrame)
+    if not framesAreEqual(actualFrame, correctedFrame) then
+        win:setFrame(correctedFrame, 0)
+    end
+end
+
 local function setWindowFrameWithUndo(win, newFrame)
     local windowID = win:id()
     local oldFrame = win:frame()
+    local constrainedFrame = constrainWindowFrameToScreen(win, newFrame)
 
-    if not windowID or framesAreEqual(oldFrame, newFrame) then
+    if not windowID or framesAreEqual(oldFrame, constrainedFrame) then
         return
     end
 
@@ -75,7 +123,7 @@ local function setWindowFrameWithUndo(win, newFrame)
         table.remove(stack, 1)
     end
 
-    win:setFrame(newFrame, 0)
+    applyConstrainedWindowFrame(win, constrainedFrame)
 end
 
 local function undoActiveWindowFrame()
@@ -91,7 +139,7 @@ local function undoActiveWindowFrame()
         return
     end
 
-    win:setFrame(table.remove(stack), 0)
+    applyConstrainedWindowFrame(win, table.remove(stack))
 end
 
 local function assignWindow(slot)
@@ -491,6 +539,27 @@ local function maximizeActiveWindow()
     end
 end
 
+local function scaleActiveWindow(scale)
+    local win = hs.window.focusedWindow()
+    if not win then
+        hs.alert.show("当前没有可调整的窗口")
+        return
+    end
+
+    local frame = win:frame()
+    local centerX = frame.x + frame.w / 2
+    local centerY = frame.y + frame.h / 2
+    local width = frame.w * scale
+    local height = frame.h * scale
+
+    setWindowFrameWithUndo(win, {
+        x = centerX - width / 2,
+        y = centerY - height / 2,
+        w = width,
+        h = height,
+    })
+end
+
 local function handleFractionKey(side)
     local pendingTimer = pendingFractionTimers[side]
 
@@ -549,6 +618,14 @@ end)
 
 hs.hotkey.bind({ "alt", "shift" }, "delete", function()
     undoActiveWindowFrame()
+end)
+
+hs.hotkey.bind({ "alt", "shift" }, "[", function()
+    scaleActiveWindow(scaleFactors[1])
+end)
+
+hs.hotkey.bind({ "alt", "shift" }, "]", function()
+    scaleActiveWindow(scaleFactors[2])
 end)
 
 hs.hotkey.bind({ "alt" }, "`", function()
