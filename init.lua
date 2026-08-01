@@ -10,8 +10,11 @@ local missionControlExitDelay = 0.15
 local spaceSwitchTimeout = 2.0
 local spaceSwitchPollInterval = 0.05
 local doublePressInterval = 0.2
+local maxUndoStates = 10
 local jumpGeneration = 0
 local pendingJumpTimers = {}
+local pendingFractionTimers = {}
+local windowUndoStacks = {}
 
 local function windowDescription(win)
     local app = win:application()
@@ -37,6 +40,58 @@ local function contains(list, value)
     end
 
     return false
+end
+
+local function framesAreEqual(a, b)
+    local epsilon = 0.5
+    return math.abs(a.x - b.x) < epsilon and
+        math.abs(a.y - b.y) < epsilon and
+        math.abs(a.w - b.w) < epsilon and
+        math.abs(a.h - b.h) < epsilon
+end
+
+local function setWindowFrameWithUndo(win, newFrame)
+    local windowID = win:id()
+    local oldFrame = win:frame()
+
+    if not windowID or framesAreEqual(oldFrame, newFrame) then
+        return
+    end
+
+    local stack = windowUndoStacks[windowID]
+    if not stack then
+        stack = {}
+        windowUndoStacks[windowID] = stack
+    end
+
+    table.insert(stack, {
+        x = oldFrame.x,
+        y = oldFrame.y,
+        w = oldFrame.w,
+        h = oldFrame.h,
+    })
+
+    if #stack > maxUndoStates then
+        table.remove(stack, 1)
+    end
+
+    win:setFrame(newFrame, 0)
+end
+
+local function undoActiveWindowFrame()
+    local win = hs.window.focusedWindow()
+    if not win then
+        hs.alert.show("当前没有可撤销的窗口")
+        return
+    end
+
+    local stack = windowUndoStacks[win:id()]
+    if not stack or #stack == 0 then
+        hs.alert.show("当前窗口没有可撤销的状态")
+        return
+    end
+
+    win:setFrame(table.remove(stack), 0)
 end
 
 local function assignWindow(slot)
@@ -175,12 +230,12 @@ local function moveWindowToMouse(win)
         targetFrame.y + targetFrame.h - height
     ))
 
-    win:setFrame({
+    setWindowFrameWithUndo(win, {
         x = x,
         y = y,
         w = width,
         h = height,
-    }, 0)
+    })
     moveMouseToWindowCenter(win)
 end
 
@@ -395,6 +450,68 @@ local function cleanAndShowAssignableKeys()
     )
 end
 
+local function layoutActiveWindow(side, fraction)
+    local win = hs.window.focusedWindow()
+    if not win then
+        hs.alert.show("当前没有可调整的窗口")
+        return
+    end
+
+    local screen = win:screen()
+    if not screen then
+        return
+    end
+
+    local screenFrame = screen:frame()
+    local width = screenFrame.w * fraction
+    local x = screenFrame.x
+
+    if side == "right" then
+        x = screenFrame.x + screenFrame.w - width
+    end
+
+    setWindowFrameWithUndo(win, {
+        x = x,
+        y = screenFrame.y,
+        w = width,
+        h = screenFrame.h,
+    })
+end
+
+local function maximizeActiveWindow()
+    local win = hs.window.focusedWindow()
+    if not win then
+        hs.alert.show("当前没有可调整的窗口")
+        return
+    end
+
+    local screen = win:screen()
+    if screen then
+        setWindowFrameWithUndo(win, screen:frame())
+    end
+end
+
+local function handleFractionKey(side)
+    local pendingTimer = pendingFractionTimers[side]
+
+    if pendingTimer then
+        -- 双击：取消左/右 2/3，改为左/右 1/3。
+        pendingTimer:stop()
+        pendingFractionTimers[side] = nil
+        layoutActiveWindow(side, 1 / 3)
+        return
+    end
+
+    -- 单击：等待 0.2 秒确认没有第二次按键，再布局为 2/3。
+    pendingFractionTimers[side] = hs.timer.doAfter(
+        doublePressInterval,
+        function()
+            pendingFractionTimers[side] = nil
+            layoutActiveWindow(side, 2 / 3)
+        end
+    )
+end
+
 
 for slot, key in ipairs(keys) do
     hs.hotkey.bind(assignMods, key, function()
@@ -408,6 +525,30 @@ end
 
 hs.hotkey.bind({ "alt", "shift" }, "z", function()
     cleanAndShowAssignableKeys()
+end)
+
+hs.hotkey.bind({ "alt" }, "left", function()
+    layoutActiveWindow("left", 1 / 2)
+end)
+
+hs.hotkey.bind({ "alt" }, "right", function()
+    layoutActiveWindow("right", 1 / 2)
+end)
+
+hs.hotkey.bind({ "alt", "shift" }, "left", function()
+    handleFractionKey("left")
+end)
+
+hs.hotkey.bind({ "alt", "shift" }, "right", function()
+    handleFractionKey("right")
+end)
+
+hs.hotkey.bind({ "alt", "shift" }, "return", function()
+    maximizeActiveWindow()
+end)
+
+hs.hotkey.bind({ "alt", "shift" }, "delete", function()
+    undoActiveWindowFrame()
 end)
 
 hs.hotkey.bind({ "alt" }, "`", function()
