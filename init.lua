@@ -334,6 +334,44 @@ local function handleJumpKey(slot)
     end)
 end
 
+local function cleanAndShowAssignableKeys()
+    local assignableKeys = {}
+
+    for slot, key in ipairs(keys) do
+        local saved = slots[slot]
+        local isAvailable = false
+
+        if saved and saved.window then
+            -- 已关闭的窗口对象仍可能留在 Lua 中，因此用 pcall 防止
+            -- 某些应用退出时 Accessibility 对象失效而抛出异常。
+            local ok, app = pcall(function()
+                return saved.window:application()
+            end)
+            isAvailable = ok and app ~= nil
+        end
+
+        if not isAvailable then
+            slots[slot] = nil
+            table.insert(assignableKeys, key:upper())
+
+            local pendingTimer = pendingJumpTimers[slot]
+            if pendingTimer then
+                pendingTimer:stop()
+                pendingJumpTimers[slot] = nil
+            end
+        end
+    end
+
+    if #assignableKeys == 0 then
+        hs.alert.show("当前没有可重新登记的空闲按键")
+        return
+    end
+
+    hs.alert.show(
+        "可重新登记的按键：\n" .. table.concat(assignableKeys, "  ")
+    )
+end
+
 
 for slot, key in ipairs(keys) do
     hs.hotkey.bind(assignMods, key, function()
@@ -344,6 +382,10 @@ for slot, key in ipairs(keys) do
         handleJumpKey(slot)
     end)
 end
+
+hs.hotkey.bind({ "alt", "shift" }, "z", function()
+    cleanAndShowAssignableKeys()
+end)
 
 hs.hotkey.bind({ "alt" }, "`", function()
   hs.spaces.openMissionControl()
