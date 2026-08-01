@@ -57,19 +57,42 @@ local function assignWindow(slot)
         return
     end
 
+    local windowID = win:id()
+    local releasedKeys = {}
+
+    -- 同一个窗口只能登记到一个槽位。若它已经绑定在其他键上，
+    -- 先释放旧槽位，再把它迁移到当前选择的键。
+    for otherSlot, saved in pairs(slots) do
+        if windowID and otherSlot ~= slot and saved.id == windowID then
+            slots[otherSlot] = nil
+            table.insert(releasedKeys, keys[otherSlot]:upper())
+
+            local pendingTimer = pendingJumpTimers[otherSlot]
+            if pendingTimer then
+                pendingTimer:stop()
+                pendingJumpTimers[otherSlot] = nil
+            end
+        end
+    end
+
     slots[slot] = {
         -- 保留窗口对象本身；仅靠 hs.window.get(id) 在其他 Space
         -- 上可能受 macOS 窗口枚举限制
         window = win,
-        id = win:id(),
+        id = windowID,
         spaceID = spaces[1],
         description = windowDescription(win),
     }
 
-    hs.alert.show(
-        "窗口 " .. keys[slot]:upper() .. "：\n" ..
+    local message = "窗口 " .. keys[slot]:upper() .. "：\n" ..
         slots[slot].description
-    )
+
+    if #releasedKeys > 0 then
+        message = message .. "\n已释放旧键：" ..
+            table.concat(releasedKeys, "  ")
+    end
+
+    hs.alert.show(message)
 end
 
 local function focusSavedWindow(slot)
