@@ -596,6 +596,16 @@ hs.hotkey.bind({ "alt", "shift" }, "z", function()
     cleanAndShowAssignableKeys()
 end)
 
+hs.hotkey.bind({ "alt", "shift" }, "x", function()
+    local win = hs.window.focusedWindow()
+    if not win then
+        hs.alert.show("当前没有可移动的窗口")
+        return
+    end
+
+    moveWindowToMouse(win)
+end)
+
 hs.hotkey.bind({ "alt" }, "left", function()
     layoutActiveWindow("left", 1 / 2)
 end)
