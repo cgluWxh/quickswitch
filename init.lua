@@ -51,12 +51,29 @@ local function framesAreEqual(a, b)
         math.abs(a.h - b.h) < epsilon
 end
 
+local function screenContainingPoint(point)
+    for _, screen in ipairs(hs.screen.allScreens()) do
+        -- fullFrame() 包含菜单栏和 Dock 区域，更适合判断一个全局坐标
+        -- 实际属于哪块显示器；窗口边界限制仍使用下面的 frame()。
+        local frame = screen:fullFrame()
+
+        if point.x >= frame.x and
+            point.x < frame.x + frame.w and
+            point.y >= frame.y and
+            point.y < frame.y + frame.h then
+            return screen
+        end
+    end
+
+    return nil
+end
+
 local function constrainWindowFrameToScreen(win, requestedFrame)
     local center = {
         x = requestedFrame.x + requestedFrame.w / 2,
         y = requestedFrame.y + requestedFrame.h / 2,
     }
-    local screen = hs.screen.find(center) or win:screen()
+    local screen = screenContainingPoint(center) or win:screen()
 
     if not screen then
         return requestedFrame
@@ -630,11 +647,11 @@ hs.hotkey.bind({ "alt", "shift" }, "delete", function()
     undoActiveWindowFrame()
 end)
 
-hs.hotkey.bind({ "alt", "shift" }, "[", function()
+hs.hotkey.bind({ "alt", "shift" }, "-", function()
     scaleActiveWindow(scaleFactors[1])
 end)
 
-hs.hotkey.bind({ "alt", "shift" }, "]", function()
+hs.hotkey.bind({ "alt", "shift" }, "=", function()
     scaleActiveWindow(scaleFactors[2])
 end)
 
