@@ -16,6 +16,7 @@ local pendingJumpTimers = {}
 local pendingFractionTimers = {}
 local windowUndoStacks = {}
 local scaleFactors = { 0.9, 1 / 0.9 }
+local maxDescriptionLength = 60
 
 local function windowDescription(win)
     local app = win:application()
@@ -204,8 +205,13 @@ local function assignWindow(slot)
         description = windowDescription(win),
     }
 
+    local truncatedDescription = slots[slot].description
+    if #truncatedDescription > maxDescriptionLength then
+        truncatedDescription = truncatedDescription:sub(1, maxDescriptionLength) .. "..."
+    end
+
     local message = "窗口 " .. keys[slot]:upper() .. "：\n" ..
-        slots[slot].description
+        truncatedDescription
 
     if #releasedKeys > 0 then
         message = message .. "\n已释放旧键：" ..
@@ -479,6 +485,7 @@ end
 
 local function cleanAndShowAssignableKeys()
     local assignableKeys = {}
+    local descriptionsStr = ""
 
     for slot, key in ipairs(keys) do
         local saved = slots[slot]
@@ -503,15 +510,20 @@ local function cleanAndShowAssignableKeys()
                 pendingJumpTimers[slot] = nil
             end
         end
-    end
 
-    if #assignableKeys == 0 then
-        hs.alert.show("当前没有可重新登记的空闲按键")
-        return
+        local truncateDescription = saved and saved.description or "尚未登记"
+        if #truncateDescription > maxDescriptionLength then
+            truncateDescription = truncateDescription:sub(1, maxDescriptionLength) .. "..."
+        end
+
+        descriptionsStr = descriptionsStr .. key:upper() .. ": " ..
+            truncateDescription .. "\n"
     end
 
     hs.alert.show(
-        "可重新登记的按键：\n" .. table.concat(assignableKeys, "  ")
+        descriptionsStr ..
+        "可重新登记的按键：\n" .. table.concat(assignableKeys, "  "),
+        3
     )
 end
 
