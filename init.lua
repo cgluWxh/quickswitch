@@ -4,11 +4,11 @@ local jumpMods = { "alt" }
 local assignMods = { "alt", "shift" }
 local keys = { "q", "w", "e", "r", "1", "2", "3", "4" }
 
--- Mission Control 和 Space 切换都有异步动画。不要用一次固定延时判断
--- 是否完成，而是在此时间内持续确认目标 Space 并重试聚焦。
-local missionControlExitDelay = 0.15
-local spaceSwitchTimeout = 2.0
+-- gotoSpace() 返回 true 只表示已发起切换。若短时间内目标
+-- Space 仍未可见，主动重试一次，不做无意义的长时间等待。
+local spaceSwitchAttemptTimeout = 0.8
 local spaceSwitchPollInterval = 0.05
+local maxSpaceSwitchAttempts = 2
 local doublePressInterval = 0.2
 local maxUndoStates = 10
 local jumpGeneration = 0
@@ -313,7 +313,8 @@ end
 local function focusWhenSpaceIsReady(
     slot,
     generation,
-    startedAt
+    attempt,
+    attemptStartedAt
 )
     -- 连续按多个跳转键时，让先前跳转产生的定时器自动失效
     if generation ~= jumpGeneration then
@@ -338,8 +339,28 @@ local function focusWhenSpaceIsReady(
         return
     end
 
-    if hs.timer.secondsSinceEpoch() - startedAt >= spaceSwitchTimeout then
-        hs.alert.show("切换桌面超时，请再试一次")
+    if hs.timer.secondsSinceEpoch() - attemptStartedAt >=
+        spaceSwitchAttemptTimeout then
+        if attempt < maxSpaceSwitchAttempts then
+            local ok, err = hs.spaces.gotoSpace(saved.spaceID)
+            if not ok then
+                hs.alert.show(
+                    "重试切换桌面失败" ..
+                    (err and "\n" .. tostring(err) or "")
+                )
+                return
+            end
+
+            focusWhenSpaceIsReady(
+                slot,
+                generation,
+                attempt + 1,
+                hs.timer.secondsSinceEpoch()
+            )
+            return
+        end
+
+        hs.alert.show("两次切换桌面均未成功")
         return
     end
 
@@ -347,7 +368,8 @@ local function focusWhenSpaceIsReady(
         focusWhenSpaceIsReady(
             slot,
             generation,
-            startedAt
+            attempt,
+            attemptStartedAt
         )
     end)
 end
@@ -382,32 +404,35 @@ local function jumpToWindow(slot)
     jumpGeneration = jumpGeneration + 1
     local generation = jumpGeneration
 
-    -- 若当前停在 Mission Control，先退出；不在其中时调用也是安全的。
-    -- 给退出动画一点启动时间，避免 gotoSpace() 被 Mission Control 吞掉。
-    hs.spaces.closeMissionControl()
-    hs.timer.doAfter(missionControlExitDelay, function()
-        if generation ~= jumpGeneration then
-            return
-        end
-
-        if not isSpaceVisible(saved.spaceID) then
-            local ok = hs.spaces.gotoSpace(saved.spaceID)
-            if not ok then
-                hs.alert.show(
-                    "无法切换到窗口 " ..
-                    keys[slot]:upper() ..
-                    " 所在桌面"
-                )
-                return
-            end
-        end
-
+    if isSpaceVisible(saved.spaceID) then
         focusWhenSpaceIsReady(
             slot,
             generation,
+            1,
             hs.timer.secondsSinceEpoch()
         )
-    end)
+        return
+    end
+
+    -- gotoSpace() 自己会打开并关闭 Mission Control。预先强制关闭
+    -- 反而可能与它的打开动作竞争。
+    local ok, err = hs.spaces.gotoSpace(saved.spaceID)
+    if not ok then
+        hs.alert.show(
+            "无法切换到窗口 " ..
+            keys[slot]:upper() ..
+            " 所在桌面" ..
+            (err and "\n" .. tostring(err) or "")
+        )
+        return
+    end
+
+    focusWhenSpaceIsReady(
+        slot,
+        generation,
+        1,
+        hs.timer.secondsSinceEpoch()
+    )
 end
 
 local function moveSavedWindowToMouse(slot)
