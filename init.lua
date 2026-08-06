@@ -2,8 +2,8 @@ local slots = {}
 
 -- hs.spaces.gotoSpace() 依赖 Mission Control 的辅助功能元素。
 -- 默认的 0.3 秒在系统繁忙或动画尚未完成时可能不够。
-hs.spaces.MCwaitTime = 0.6
-hs.spaces.setDefaultMCwaitTime(0.6)
+hs.spaces.MCwaitTime = 0.5
+hs.spaces.setDefaultMCwaitTime(0.5)
 
 local jumpMods = { "alt" }
 local assignMods = { "alt", "shift" }
@@ -11,7 +11,7 @@ local keys = { "q", "w", "e", "r", "1", "2", "3", "4" }
 
 -- gotoSpace() 返回 true 只表示已发起切换。若短时间内目标
 -- Space 仍未可见，主动重试一次，不做无意义的长时间等待。
-local spaceSwitchAttemptTimeout = 0.6
+local spaceSwitchAttemptTimeout = 0.5
 local spaceSwitchPollInterval = 0.05
 local maxSpaceSwitchAttempts = 2
 local doublePressInterval = 0.2
