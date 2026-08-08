@@ -2,8 +2,8 @@ local slots = {}
 
 -- hs.spaces.gotoSpace() 依赖 Mission Control 的辅助功能元素。
 -- 默认的 0.3 秒在系统繁忙或动画尚未完成时可能不够。
-hs.spaces.MCwaitTime = 0.5
-hs.spaces.setDefaultMCwaitTime(0.5)
+hs.spaces.MCwaitTime = 0.4
+hs.spaces.setDefaultMCwaitTime(0.4)
 
 local jumpMods = { "alt" }
 local assignMods = { "alt", "shift" }
