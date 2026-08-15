@@ -34,25 +34,37 @@ local lastFocusedWindow = hs.window.focusedWindow()
 local expectedHistoryFocusID = nil
 local historyFocusGeneration = 0
 
-local function validWindow(win)
+local function windowIDIfValid(win)
     if not win then
-        return false
+        return nil
     end
 
-    local ok, app = pcall(function()
-        return win:application()
+    local ok, app, windowID = pcall(function()
+        return win:application(), win:id()
     end)
-    return ok and app ~= nil and win:id() ~= nil
+    if not ok or app == nil or windowID == nil then
+        return nil
+    end
+
+    return windowID
+end
+
+local function validWindow(win)
+    return windowIDIfValid(win) ~= nil
 end
 
 local function pushFocusHistory(stack, win)
-    if not validWindow(win) then
+    local windowID = windowIDIfValid(win)
+    if not windowID then
         return
     end
 
-    local windowID = win:id()
-    if #stack > 0 and stack[#stack]:id() == windowID then
-        return
+    -- 同一窗口只保留最近一次出现的位置；顺便清除已经关闭的窗口。
+    for index = #stack, 1, -1 do
+        local savedID = windowIDIfValid(stack[index])
+        if not savedID or savedID == windowID then
+            table.remove(stack, index)
+        end
     end
 
     table.insert(stack, win)
@@ -64,7 +76,8 @@ end
 local function popValidFocusHistory(stack, currentID)
     while #stack > 0 do
         local win = table.remove(stack)
-        if validWindow(win) and win:id() ~= currentID then
+        local windowID = windowIDIfValid(win)
+        if windowID and windowID ~= currentID then
             return win
         end
     end
