@@ -16,12 +16,123 @@ local spaceSwitchPollInterval = 0.05
 local maxSpaceSwitchAttempts = 2
 local doublePressInterval = 0.2
 local maxUndoStates = 10
+local maxFocusHistoryStates = 100
 local jumpGeneration = 0
 local pendingJumpTimers = {}
 local pendingFractionTimers = {}
 local windowUndoStacks = {}
 local scaleFactors = { 0.9, 1 / 0.9 }
 local maxDescriptionLength = 60
+
+-- 最前窗口历史采用类似浏览器的后退/前进双栈。普通的焦点变化
+-- （鼠标点击、Cmd-Tab、Alt+QWER/1234 等）会清空前进栈；只有
+-- Alt+Z/Alt+X 自身造成的焦点变化不会被再次写入历史。
+local focusBackStack = {}
+local focusForwardStack = {}
+local lastFocusedWindow = hs.window.focusedWindow()
+local expectedHistoryFocusID = nil
+local historyFocusGeneration = 0
+
+local function validWindow(win)
+    if not win then
+        return false
+    end
+
+    local ok, app = pcall(function()
+        return win:application()
+    end)
+    return ok and app ~= nil and win:id() ~= nil
+end
+
+local function pushFocusHistory(stack, win)
+    if not validWindow(win) then
+        return
+    end
+
+    local windowID = win:id()
+    if #stack > 0 and stack[#stack]:id() == windowID then
+        return
+    end
+
+    table.insert(stack, win)
+    if #stack > maxFocusHistoryStates then
+        table.remove(stack, 1)
+    end
+end
+
+local function popValidFocusHistory(stack, currentID)
+    while #stack > 0 do
+        local win = table.remove(stack)
+        if validWindow(win) and win:id() ~= currentID then
+            return win
+        end
+    end
+
+    return nil
+end
+
+local function focusHistoryWindow(win)
+    if win:isMinimized() then
+        win:unminimize()
+    end
+
+    win:raise()
+    win:focus()
+end
+
+local function navigateFocusHistory(sourceStack, destinationStack, emptyMessage)
+    local current = hs.window.focusedWindow()
+    if not validWindow(current) then
+        current = lastFocusedWindow
+    end
+
+    local currentID = validWindow(current) and current:id() or nil
+    local target = popValidFocusHistory(sourceStack, currentID)
+    if not target then
+        hs.alert.show(emptyMessage)
+        return
+    end
+
+    pushFocusHistory(destinationStack, current)
+    lastFocusedWindow = target
+    expectedHistoryFocusID = target:id()
+    historyFocusGeneration = historyFocusGeneration + 1
+    local generation = historyFocusGeneration
+
+    focusHistoryWindow(target)
+
+    -- 跨 Space 切换时焦点通知可能较晚；超时后不再把后续的手动
+    -- 切换误认为这次历史导航。
+    hs.timer.doAfter(1.5, function()
+        if generation == historyFocusGeneration then
+            expectedHistoryFocusID = nil
+        end
+    end)
+end
+
+local focusHistoryFilter = hs.window.filter.new()
+focusHistoryFilter:subscribe(hs.window.filter.windowFocused, function(win)
+    if not validWindow(win) then
+        return
+    end
+
+    local windowID = win:id()
+    if windowID == expectedHistoryFocusID then
+        expectedHistoryFocusID = nil
+        lastFocusedWindow = win
+        return
+    end
+
+    -- 任何非历史导航的焦点变化都开始一条新路径，Alt+X 随即失效。
+    historyFocusGeneration = historyFocusGeneration + 1
+    expectedHistoryFocusID = nil
+    if validWindow(lastFocusedWindow) and
+        lastFocusedWindow:id() ~= windowID then
+        pushFocusHistory(focusBackStack, lastFocusedWindow)
+    end
+    focusForwardStack = {}
+    lastFocusedWindow = win
+end)
 
 local function windowDescription(win)
     local app = win:application()
@@ -650,6 +761,22 @@ for slot, key in ipairs(keys) do
         handleJumpKey(slot)
     end)
 end
+
+hs.hotkey.bind({ "alt" }, "z", function()
+    navigateFocusHistory(
+        focusBackStack,
+        focusForwardStack,
+        "没有更早的窗口"
+    )
+end)
+
+hs.hotkey.bind({ "alt" }, "x", function()
+    navigateFocusHistory(
+        focusForwardStack,
+        focusBackStack,
+        "没有更晚的窗口"
+    )
+end)
 
 hs.hotkey.bind({ "alt", "shift" }, "z", function()
     cleanAndShowAssignableKeys()
