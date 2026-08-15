@@ -23,6 +23,7 @@ local pendingFractionTimers = {}
 local windowUndoStacks = {}
 local scaleFactors = { 0.9, 1 / 0.9 }
 local maxDescriptionLength = 60
+local moveMouseToWindowCenter
 
 -- 最前窗口历史采用类似浏览器的后退/前进双栈。普通的焦点变化
 -- （鼠标点击、Cmd-Tab、Alt+QWER/1234 等）会清空前进栈；只有
@@ -78,6 +79,7 @@ local function focusHistoryWindow(win)
 
     win:raise()
     win:focus()
+    moveMouseToWindowCenter(win)
 end
 
 local function navigateFocusHistory(sourceStack, destinationStack, emptyMessage)
@@ -377,7 +379,7 @@ local function isSpaceVisible(spaceID)
     return false
 end
 
-local function moveMouseToWindowCenter(win)
+moveMouseToWindowCenter = function(win)
     local frame = win:frame()
     hs.mouse.absolutePosition({
         x = frame.x + frame.w / 2,
