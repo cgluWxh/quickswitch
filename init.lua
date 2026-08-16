@@ -24,10 +24,12 @@ local windowUndoStacks = {}
 local scaleFactors = { 0.9, 1 / 0.9 }
 local maxDescriptionLength = 60
 local moveMouseToWindowCenter
+local mouseFollowTap = nil
+local mouseFollowWindow = nil
 
 -- 最前窗口历史采用类似浏览器的后退/前进双栈。普通的焦点变化
 -- （鼠标点击、Cmd-Tab、Alt+QWER/1234 等）会清空前进栈；只有
--- Alt+Z/Alt+X 自身造成的焦点变化不会被再次写入历史。
+-- Alt+Z/Alt+Shift+Z 自身造成的焦点变化不会被再次写入历史。
 local focusBackStack = {}
 local focusForwardStack = {}
 local lastFocusedWindow = hs.window.focusedWindow()
@@ -138,7 +140,7 @@ focusHistoryFilter:subscribe(hs.window.filter.windowFocused, function(win)
         return
     end
 
-    -- 任何非历史导航的焦点变化都开始一条新路径，Alt+X 随即失效。
+    -- 任何非历史导航的焦点变化都开始一条新路径，Alt+Shift+Z 随即失效。
     historyFocusGeneration = historyFocusGeneration + 1
     expectedHistoryFocusID = nil
     if validWindow(lastFocusedWindow) and
@@ -439,6 +441,61 @@ local function moveWindowToMouse(win)
         h = height,
     })
     moveMouseToWindowCenter(win)
+end
+
+local function stopMouseFollow(message)
+    if mouseFollowTap then
+        mouseFollowTap:stop()
+        mouseFollowTap = nil
+    end
+
+    mouseFollowWindow = nil
+    if message then
+        hs.alert.show(message)
+    end
+end
+
+local function moveFollowingWindowToMouse()
+    local win = mouseFollowWindow
+    if not validWindow(win) then
+        stopMouseFollow("吸附窗口已关闭，已停止跟随")
+        return
+    end
+
+    local mousePosition = hs.mouse.absolutePosition()
+    local frame = win:frame()
+    applyConstrainedWindowFrame(win, {
+        x = mousePosition.x - frame.w / 2,
+        y = mousePosition.y - frame.h / 2,
+        w = frame.w,
+        h = frame.h,
+    })
+end
+
+local function toggleMouseFollow()
+    if mouseFollowTap then
+        stopMouseFollow()
+        return
+    end
+
+    local win = hs.window.focusedWindow()
+    if not validWindow(win) then
+        hs.alert.show("当前没有可移动的窗口")
+        return
+    end
+
+    mouseFollowWindow = win
+    mouseFollowTap = hs.eventtap.new({
+        hs.eventtap.event.types.mouseMoved,
+        hs.eventtap.event.types.leftMouseDragged,
+        hs.eventtap.event.types.rightMouseDragged,
+        hs.eventtap.event.types.otherMouseDragged,
+    }, function()
+        moveFollowingWindowToMouse()
+        return false
+    end)
+    mouseFollowTap:start()
+    moveFollowingWindowToMouse()
 end
 
 local function focusWhenSpaceIsReady(
@@ -785,7 +842,7 @@ hs.hotkey.bind({ "alt" }, "z", function()
     )
 end)
 
-hs.hotkey.bind({ "alt" }, "x", function()
+hs.hotkey.bind({ "alt", "shift" }, "z", function()
     navigateFocusHistory(
         focusForwardStack,
         focusBackStack,
@@ -793,18 +850,12 @@ hs.hotkey.bind({ "alt" }, "x", function()
     )
 end)
 
-hs.hotkey.bind({ "alt", "shift" }, "z", function()
+hs.hotkey.bind({ "alt", "shift" }, "x", function()
     cleanAndShowAssignableKeys()
 end)
 
-hs.hotkey.bind({ "alt", "shift" }, "x", function()
-    local win = hs.window.focusedWindow()
-    if not win then
-        hs.alert.show("当前没有可移动的窗口")
-        return
-    end
-
-    moveWindowToMouse(win)
+hs.hotkey.bind({ "alt" }, "x", function()
+    toggleMouseFollow()
 end)
 
 hs.hotkey.bind({ "alt" }, "left", function()
