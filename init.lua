@@ -749,19 +749,13 @@ local function cleanAndShowAssignableKeys()
 
     for slot, key in ipairs(keys) do
         local saved = slots[slot]
-        local isAvailable = false
-
-        if saved and saved.window then
-            -- 已关闭的窗口对象仍可能留在 Lua 中，因此用 pcall 防止
-            -- 某些应用退出时 Accessibility 对象失效而抛出异常。
-            local ok, app = pcall(function()
-                return saved.window:application()
-            end)
-            isAvailable = ok and app ~= nil
-        end
+        -- 使用与焦点历史相同的强校验：窗口必须仍有有效的应用、ID、
+        -- WindowServer Space 归属和非零尺寸。
+        local isAvailable = saved ~= nil and validWindow(saved.window)
 
         if not isAvailable then
             slots[slot] = nil
+            saved = nil
             table.insert(assignableKeys, key:upper())
 
             local pendingTimer = pendingJumpTimers[slot]
@@ -771,13 +765,18 @@ local function cleanAndShowAssignableKeys()
             end
         end
 
-        local truncateDescription = saved and saved.description or "尚未登记"
-        if #truncateDescription > maxDescriptionLength then
-            truncateDescription = truncateDescription:sub(1, maxDescriptionLength) .. "..."
-        end
+        if saved then
+            local truncateDescription = saved.description
+            if #truncateDescription > maxDescriptionLength then
+                truncateDescription = truncateDescription:sub(
+                    1,
+                    maxDescriptionLength
+                ) .. "..."
+            end
 
-        descriptionsStr = descriptionsStr .. key:upper() .. ": " ..
-            truncateDescription .. "\n"
+            descriptionsStr = descriptionsStr .. key:upper() .. ": " ..
+                truncateDescription .. "\n"
+        end
     end
 
     hs.alert.show(
