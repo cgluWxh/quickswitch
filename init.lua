@@ -32,7 +32,7 @@ local mouseFollowWindow = nil
 -- Alt+Z/Alt+Shift+Z 自身造成的焦点变化不会被再次写入历史。
 local focusBackStack = {}
 local focusForwardStack = {}
-local lastFocusedWindow = hs.window.focusedWindow()
+local lastFocusedWindow = nil
 local expectedHistoryFocusID = nil
 local historyFocusGeneration = 0
 
@@ -63,6 +63,67 @@ end
 local function validWindow(win)
     return windowIDIfValid(win) ~= nil
 end
+
+-- Sheet/confirm 获得 AX 焦点时，它所属的文档窗口不会再发出
+-- windowFocused。历史里应记录可再次访问的文档窗口，而不是短命的
+-- AXSheet 对象，因此尽量沿 AX 父链找到它附着的 hs.window。
+local function normalizeFocusedWindow(win)
+    if not win then
+        return nil
+    end
+
+    local ok, subrole = pcall(function()
+        return win:subrole()
+    end)
+    local isSheet = ok and subrole == "AXSheet"
+    if not isSheet and validWindow(win) then
+        return win
+    end
+
+    local originalID = nil
+    pcall(function()
+        originalID = win:id()
+    end)
+
+    local parentWindow = nil
+    pcall(function()
+        local element = hs.axuielement.windowElement(win)
+        local path = element and element:path() or {}
+        -- path() 从根到当前元素，倒序即从最近的父元素开始。
+        for index = #path - 1, 1, -1 do
+            local candidate = path[index]:asHSWindow()
+            local candidateID = windowIDIfValid(candidate)
+            if candidateID and candidateID ~= originalID then
+                parentWindow = candidate
+                break
+            end
+        end
+    end)
+    if parentWindow then
+        return parentWindow
+    end
+
+    -- 有些应用不公开 sheet 的 AXParent。这时 mainWindow 通常就是
+    -- modal 所属的文档窗口。
+    if isSheet then
+        local mainWindow = nil
+        pcall(function()
+            local app = win:application()
+            mainWindow = app and app:mainWindow() or nil
+        end)
+        if validWindow(mainWindow) then
+            return mainWindow
+        end
+    end
+
+    if validWindow(win) then
+        return win
+    end
+
+    return nil
+end
+
+lastFocusedWindow = normalizeFocusedWindow(hs.window.focusedWindow())
 
 local function pushFocusHistory(stack, win)
     local windowID = windowIDIfValid(win)
@@ -155,8 +216,11 @@ local function navigateFocusHistory(sourceStack, destinationStack, emptyMessage)
     end)
 end
 
-local focusHistoryFilter = hs.window.filter.new()
+-- new(true) 不继承默认过滤器，因此 AXSheet 和应用自定义的
+-- modal subrole 也有机会产生焦点事件。不在此处做 Space 过滤。
+local focusHistoryFilter = hs.window.filter.new(true)
 focusHistoryFilter:subscribe(hs.window.filter.windowFocused, function(win)
+    win = normalizeFocusedWindow(win)
     if not validWindow(win) then
         return
     end
@@ -182,13 +246,13 @@ end)
 local function windowDescription(win)
     local app = win:application()
     local appName = app and app:name() or "Unknown"
-    local title = win:title()
+    -- local title = win:title()
 
-    if not title or title == "" then
-        return appName
-    end
+    -- if not title or title == "" then
+    --     return appName
+    -- end
 
-    return appName .. " — " .. title
+    return appName -- .. " — " .. title
 end
 
 local function contains(list, value)
