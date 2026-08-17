@@ -41,10 +41,19 @@ local function windowIDIfValid(win)
         return nil
     end
 
-    local ok, app, windowID = pcall(function()
-        return win:application(), win:id()
+    local ok, app, windowID, frame, windowSpaces = pcall(function()
+        return win:application(), win:id(), win:frame(),
+            hs.spaces.windowSpaces(win)
     end)
-    if not ok or app == nil or windowID == nil then
+    if not ok or app == nil or windowID == nil or windowID <= 0 then
+        return nil
+    end
+
+    -- 已关闭窗口的 AX 对象可能仍能返回 application() 和 id()。
+    -- WindowServer 中真实存在的窗口应仍有 Space 归属和有效尺寸。
+    if type(windowSpaces) ~= "table" or #windowSpaces == 0 or
+        not frame or frame.w <= 0 or frame.h <= 0 or
+        frame.x ~= frame.x or frame.y ~= frame.y then
         return nil
     end
 
@@ -88,13 +97,23 @@ local function popValidFocusHistory(stack, currentID)
 end
 
 local function focusHistoryWindow(win)
-    if win:isMinimized() then
-        win:unminimize()
+    if not validWindow(win) then
+        return false
     end
 
-    win:raise()
-    win:focus()
-    moveMouseToWindowCenter(win)
+    local ok = pcall(function()
+        if win:isMinimized() then
+            win:unminimize()
+        end
+
+        win:raise()
+        win:focus()
+    end)
+    if not ok or not validWindow(win) then
+        return false
+    end
+
+    return moveMouseToWindowCenter(win)
 end
 
 local function navigateFocusHistory(sourceStack, destinationStack, emptyMessage)
@@ -103,20 +122,29 @@ local function navigateFocusHistory(sourceStack, destinationStack, emptyMessage)
         current = lastFocusedWindow
     end
 
-    local currentID = validWindow(current) and current:id() or nil
-    local target = popValidFocusHistory(sourceStack, currentID)
-    if not target then
-        hs.alert.show(emptyMessage)
-        return
+    local currentID = windowIDIfValid(current)
+    historyFocusGeneration = historyFocusGeneration + 1
+    local generation = historyFocusGeneration
+    expectedHistoryFocusID = nil
+    local target
+    while true do
+        target = popValidFocusHistory(sourceStack, currentID)
+        if not target then
+            hs.alert.show(emptyMessage)
+            return
+        end
+
+        -- 窗口可能在出栈后、真正聚焦前关闭。失败时继续向前回退，
+        -- 不让历史导航停在只剩应用、没有实际窗口的状态。
+        expectedHistoryFocusID = target:id()
+        if focusHistoryWindow(target) then
+            break
+        end
+        expectedHistoryFocusID = nil
     end
 
     pushFocusHistory(destinationStack, current)
     lastFocusedWindow = target
-    expectedHistoryFocusID = target:id()
-    historyFocusGeneration = historyFocusGeneration + 1
-    local generation = historyFocusGeneration
-
-    focusHistoryWindow(target)
 
     -- 跨 Space 切换时焦点通知可能较晚；超时后不再把后续的手动
     -- 切换误认为这次历史导航。
@@ -395,11 +423,30 @@ local function isSpaceVisible(spaceID)
 end
 
 moveMouseToWindowCenter = function(win)
-    local frame = win:frame()
-    hs.mouse.absolutePosition({
+    if not validWindow(win) then
+        return false
+    end
+
+    local ok, frame = pcall(function()
+        return win:frame()
+    end)
+    if not ok or not frame then
+        return false
+    end
+
+    local center = {
         x = frame.x + frame.w / 2,
         y = frame.y + frame.h / 2,
+    }
+    if not screenContainingPoint(center) then
+        return false
+    end
+
+    hs.mouse.absolutePosition({
+        x = center.x,
+        y = center.y,
     })
+    return true
 end
 
 local function moveWindowToMouse(win)
