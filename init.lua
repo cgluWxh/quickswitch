@@ -877,6 +877,34 @@ local function layoutActiveWindow(side, fraction)
     })
 end
 
+local function layoutActiveWindowVertical(side, fraction)
+    local win = hs.window.focusedWindow()
+    if not win then
+        hs.alert.show("There is no window to resize")
+        return
+    end
+
+    local screen = win:screen()
+    if not screen then
+        return
+    end
+
+    local screenFrame = screen:frame()
+    local height = screenFrame.h * fraction
+    local y = screenFrame.y
+
+    if side == "bottom" then
+        y = screenFrame.y + screenFrame.h - height
+    end
+
+    setWindowFrameWithUndo(win, {
+        x = screenFrame.x,
+        y = y,
+        w = screenFrame.w,
+        h = height,
+    })
+end
+
 local function maximizeActiveWindow()
     local win = hs.window.focusedWindow()
     if not win then
@@ -973,6 +1001,14 @@ end)
 
 hs.hotkey.bind({ "alt" }, "right", function()
     layoutActiveWindow("right", 1 / 2)
+end)
+
+hs.hotkey.bind({ "alt" }, "up", function()
+    layoutActiveWindowVertical("top", 1 / 2)
+end)
+
+hs.hotkey.bind({ "alt" }, "down", function()
+    layoutActiveWindowVertical("bottom", 1 / 2)
 end)
 
 hs.hotkey.bind({ "alt", "shift" }, "left", function()
