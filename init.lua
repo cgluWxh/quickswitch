@@ -372,13 +372,13 @@ end
 local function undoActiveWindowFrame()
     local win = hs.window.focusedWindow()
     if not win then
-        hs.alert.show("当前没有可撤销的窗口")
+        hs.alert.show("There is no window to undo")
         return
     end
 
     local stack = windowUndoStacks[win:id()]
     if not stack or #stack == 0 then
-        hs.alert.show("当前窗口没有可撤销的状态")
+        hs.alert.show("The current window has no state to undo")
         return
     end
 
@@ -389,7 +389,7 @@ local function assignWindow(slot)
     local win = hs.window.focusedWindow()
 
     if not win then
-        hs.alert.show("当前没有可登记的窗口")
+        hs.alert.show("There is no window to register")
         return
     end
 
@@ -397,7 +397,7 @@ local function assignWindow(slot)
 
     if not spaces or #spaces == 0 then
         hs.alert.show(
-            "无法读取窗口所在桌面" ..
+            "Unable to read the window's desktop" ..
             (err and "\n" .. tostring(err) or "")
         )
         return
@@ -435,11 +435,11 @@ local function assignWindow(slot)
         truncatedDescription = truncatedDescription:sub(1, maxDescriptionLength) .. "..."
     end
 
-    local message = "窗口 " .. keys[slot]:upper() .. "：\n" ..
+    local message = "Window " .. keys[slot]:upper() .. ":\n" ..
         truncatedDescription
 
     if #releasedKeys > 0 then
-        message = message .. "\n已释放旧键：" ..
+        message = message .. "\nReleased previous key: " ..
             table.concat(releasedKeys, "  ")
     end
 
@@ -451,7 +451,7 @@ local function focusSavedWindow(slot)
 
     if not saved then
         hs.alert.show(
-            "窗口 " .. keys[slot]:upper() .. " 尚未登记"
+            "Window " .. keys[slot]:upper() .. " is not registered"
         )
         return
     end
@@ -462,7 +462,7 @@ local function focusSavedWindow(slot)
     if not win or not win:application() then
         slots[slot] = nil
         hs.alert.show(
-            "窗口 " .. keys[slot]:upper() .. " 已关闭，请重新登记"
+            "Window " .. keys[slot]:upper() .. " is closed; please register it again"
         )
         return
     end
@@ -569,7 +569,7 @@ end
 local function moveFollowingWindowToMouse()
     local win = mouseFollowWindow
     if not validWindow(win) then
-        stopMouseFollow("吸附窗口已关闭，已停止跟随")
+        stopMouseFollow("The attached window was closed; following stopped")
         return
     end
 
@@ -591,7 +591,7 @@ local function toggleMouseFollow()
 
     local win = hs.window.focusedWindow()
     if not validWindow(win) then
-        hs.alert.show("当前没有可移动的窗口")
+        hs.alert.show("There is no window to move")
         return
     end
 
@@ -644,7 +644,7 @@ local function focusWhenSpaceIsReady(
             local ok, err = hs.spaces.gotoSpace(saved.spaceID)
             if not ok then
                 hs.alert.show(
-                    "重试切换桌面失败" ..
+                    "Retrying the desktop switch failed" ..
                     (err and "\n" .. tostring(err) or "")
                 )
                 return
@@ -659,7 +659,7 @@ local function focusWhenSpaceIsReady(
             return
         end
 
-        hs.alert.show("两次切换桌面均未成功")
+        hs.alert.show("Both attempts to switch desktops failed")
         return
     end
 
@@ -678,7 +678,7 @@ local function jumpToWindow(slot)
 
     if not saved then
         hs.alert.show(
-            "窗口 " .. keys[slot]:upper() .. " 尚未登记"
+            "Window " .. keys[slot]:upper() .. " is not registered"
         )
         return
     end
@@ -688,7 +688,7 @@ local function jumpToWindow(slot)
     if not win or not win:application() then
         slots[slot] = nil
         hs.alert.show(
-            "窗口 " .. keys[slot]:upper() .. " 已关闭，请重新登记"
+            "Window " .. keys[slot]:upper() .. " is closed; please register it again"
         )
         return
     end
@@ -718,9 +718,8 @@ local function jumpToWindow(slot)
     local ok, err = hs.spaces.gotoSpace(saved.spaceID)
     if not ok then
         hs.alert.show(
-            "无法切换到窗口 " ..
+            "Unable to switch to the desktop containing window " ..
             keys[slot]:upper() ..
-            " 所在桌面" ..
             (err and "\n" .. tostring(err) or "")
         )
         return
@@ -739,7 +738,7 @@ local function moveSavedWindowToMouse(slot)
 
     if not saved then
         hs.alert.show(
-            "窗口 " .. keys[slot]:upper() .. " 尚未登记"
+            "Window " .. keys[slot]:upper() .. " is not registered"
         )
         return
     end
@@ -748,7 +747,7 @@ local function moveSavedWindowToMouse(slot)
     if not win or not win:application() then
         slots[slot] = nil
         hs.alert.show(
-            "窗口 " .. keys[slot]:upper() .. " 已关闭，请重新登记"
+            "Window " .. keys[slot]:upper() .. " is closed; please register it again"
         )
         return
     end
@@ -777,7 +776,7 @@ local function moveSavedWindowToMouse(slot)
     if targetSpace and not contains(windowSpaces, targetSpace) then
         local ok = hs.spaces.moveWindowToSpace(win, targetSpace)
         if not ok then
-            hs.alert.show("无法把窗口移动到鼠标所在桌面")
+            hs.alert.show("Unable to move the window to the desktop under the pointer")
             return
         end
 
@@ -845,7 +844,7 @@ local function cleanAndShowAssignableKeys()
 
     hs.alert.show(
         descriptionsStr ..
-        "可重新登记的按键：\n" .. table.concat(assignableKeys, "  "),
+        "Keys available for registration:\n" .. table.concat(assignableKeys, "  "),
         3
     )
 end
@@ -853,7 +852,7 @@ end
 local function layoutActiveWindow(side, fraction)
     local win = hs.window.focusedWindow()
     if not win then
-        hs.alert.show("当前没有可调整的窗口")
+        hs.alert.show("There is no window to resize")
         return
     end
 
@@ -881,7 +880,7 @@ end
 local function maximizeActiveWindow()
     local win = hs.window.focusedWindow()
     if not win then
-        hs.alert.show("当前没有可调整的窗口")
+        hs.alert.show("There is no window to resize")
         return
     end
 
@@ -894,7 +893,7 @@ end
 local function scaleActiveWindow(scale)
     local win = hs.window.focusedWindow()
     if not win then
-        hs.alert.show("当前没有可调整的窗口")
+        hs.alert.show("There is no window to resize")
         return
     end
 
@@ -948,7 +947,7 @@ hs.hotkey.bind({ "alt" }, "z", function()
     navigateFocusHistory(
         focusBackStack,
         focusForwardStack,
-        "没有更早的窗口"
+        "There is no earlier window"
     )
 end)
 
@@ -956,7 +955,7 @@ hs.hotkey.bind({ "alt", "shift" }, "z", function()
     navigateFocusHistory(
         focusForwardStack,
         focusBackStack,
-        "没有更晚的窗口"
+        "There is no later window"
     )
 end)
 
@@ -1004,4 +1003,4 @@ hs.hotkey.bind({ "alt" }, "`", function()
   hs.spaces.openMissionControl()
 end)
 
-hs.alert.show("窗口快捷键已加载")
+hs.alert.show("Window shortcuts loaded")
