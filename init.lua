@@ -16,7 +16,6 @@ local spaceSwitchPollInterval = 0.05
 local maxSpaceSwitchAttempts = 2
 local doublePressInterval = 0.2
 local maxUndoStates = 10
-local maxFocusHistoryStates = 100
 local jumpGeneration = 0
 local pendingJumpTimers = {}
 local pendingFractionTimers = {}
@@ -27,14 +26,14 @@ local moveMouseToWindowCenter
 local mouseFollowTap = nil
 local mouseFollowWindow = nil
 
--- 最前窗口历史采用类似浏览器的后退/前进双栈。普通的焦点变化
--- （鼠标点击、Cmd-Tab、Alt+QWER/1234 等）会清空前进栈；只有
--- Alt+Z/Alt+Shift+Z 自身造成的焦点变化不会被再次写入历史。
-local focusBackStack = {}
-local focusForwardStack = {}
+-- 所有有效窗口各自在环中出现一次。Alt+Z/Alt+Shift+Z 只沿环移动
+-- 指针，不改变顺序；鼠标、Cmd-Tab、Alt+QWER/1234 等外部切换会把
+-- 目标窗口插到来源窗口的 Alt+Z 一侧，因此 Alt+Z 仍能立刻返回。
+local focusRing = {}
+local focusRingIndex = nil
 local lastFocusedWindow = nil
-local expectedHistoryFocusID = nil
-local historyFocusGeneration = 0
+local expectedRingFocusID = nil
+local ringFocusGeneration = 0
 
 local function windowIDIfValid(win)
     if not win then
@@ -125,39 +124,79 @@ end
 
 lastFocusedWindow = normalizeFocusedWindow(hs.window.focusedWindow())
 
-local function pushFocusHistory(stack, win)
-    local windowID = windowIDIfValid(win)
+local function findFocusRingIndex(windowID)
     if not windowID then
-        return
+        return nil
     end
 
-    -- 同一窗口只保留最近一次出现的位置；顺便清除已经关闭的窗口。
-    for index = #stack, 1, -1 do
-        local savedID = windowIDIfValid(stack[index])
-        if not savedID or savedID == windowID then
-            table.remove(stack, index)
-        end
-    end
-
-    table.insert(stack, win)
-    if #stack > maxFocusHistoryStates then
-        table.remove(stack, 1)
-    end
-end
-
-local function popValidFocusHistory(stack, currentID)
-    while #stack > 0 do
-        local win = table.remove(stack)
-        local windowID = windowIDIfValid(win)
-        if windowID and windowID ~= currentID then
-            return win
+    for index, win in ipairs(focusRing) do
+        if windowIDIfValid(win) == windowID then
+            return index
         end
     end
 
     return nil
 end
 
-local function focusHistoryWindow(win)
+local function cleanFocusRing(preferredWindowID)
+    local seen = {}
+    local cleaned = {}
+
+    for _, win in ipairs(focusRing) do
+        local windowID = windowIDIfValid(win)
+        if windowID and not seen[windowID] then
+            seen[windowID] = true
+            table.insert(cleaned, win)
+        end
+    end
+
+    focusRing = cleaned
+    focusRingIndex = findFocusRingIndex(preferredWindowID)
+    if not focusRingIndex and #focusRing > 0 then
+        focusRingIndex = 1
+    end
+end
+
+local function addWindowToFocusRing(win)
+    local windowID = windowIDIfValid(win)
+    if not windowID or findFocusRingIndex(windowID) then
+        return
+    end
+
+    table.insert(focusRing, win)
+    if not focusRingIndex then
+        focusRingIndex = #focusRing
+    end
+end
+
+local function placeExternalFocusNextToSource(source, target)
+    local sourceID = windowIDIfValid(source)
+    local targetID = windowIDIfValid(target)
+    if not targetID then
+        return
+    end
+
+    cleanFocusRing(sourceID)
+    addWindowToFocusRing(source)
+
+    local targetIndex = findFocusRingIndex(targetID)
+    if targetIndex then
+        table.remove(focusRing, targetIndex)
+    end
+
+    local sourceIndex = findFocusRingIndex(sourceID)
+    if sourceIndex then
+        -- Alt+Z 沿数组下标增大的方向移动。插在来源之前后，目标的
+        -- 下一个元素正好就是刚才离开的窗口。
+        table.insert(focusRing, sourceIndex, target)
+        focusRingIndex = sourceIndex
+    else
+        table.insert(focusRing, target)
+        focusRingIndex = #focusRing
+    end
+end
+
+local function focusRingWindow(win)
     if not validWindow(win) then
         return false
     end
@@ -174,44 +213,59 @@ local function focusHistoryWindow(win)
         return false
     end
 
-    return moveMouseToWindowCenter(win)
+    -- 鼠标跟随失败（例如 Space 动画期间暂时无法确认坐标）不代表
+    -- 窗口聚焦失败，更不能因此把仍有效的窗口从环中移除。
+    moveMouseToWindowCenter(win)
+    return true
 end
 
-local function navigateFocusHistory(sourceStack, destinationStack, emptyMessage)
+local function navigateFocusRing(step)
     local current = hs.window.focusedWindow()
     if not validWindow(current) then
         current = lastFocusedWindow
     end
 
     local currentID = windowIDIfValid(current)
-    historyFocusGeneration = historyFocusGeneration + 1
-    local generation = historyFocusGeneration
-    expectedHistoryFocusID = nil
-    local target
-    while true do
-        target = popValidFocusHistory(sourceStack, currentID)
-        if not target then
-            hs.alert.show(emptyMessage)
-            return
-        end
+    cleanFocusRing(currentID)
+    addWindowToFocusRing(current)
+    focusRingIndex = findFocusRingIndex(currentID) or focusRingIndex
 
-        -- 窗口可能在出栈后、真正聚焦前关闭。失败时继续向前回退，
-        -- 不让历史导航停在只剩应用、没有实际窗口的状态。
-        expectedHistoryFocusID = target:id()
-        if focusHistoryWindow(target) then
-            break
-        end
-        expectedHistoryFocusID = nil
+    if #focusRing < 2 or not focusRingIndex then
+        hs.alert.show("There is no other window")
+        return
     end
 
-    pushFocusHistory(destinationStack, current)
-    lastFocusedWindow = target
+    ringFocusGeneration = ringFocusGeneration + 1
+    local generation = ringFocusGeneration
+    expectedRingFocusID = nil
+
+    -- 首尾相连。若目标恰好在聚焦前关闭，就删掉它并继续同方向找。
+    while #focusRing > 1 do
+        local targetIndex = ((focusRingIndex - 1 + step) % #focusRing) + 1
+        local target = focusRing[targetIndex]
+        local targetID = windowIDIfValid(target)
+
+        if targetID then
+            expectedRingFocusID = targetID
+            if focusRingWindow(target) then
+                focusRingIndex = targetIndex
+                lastFocusedWindow = target
+                break
+            end
+            expectedRingFocusID = nil
+        end
+
+        table.remove(focusRing, targetIndex)
+        if targetIndex < focusRingIndex then
+            focusRingIndex = focusRingIndex - 1
+        end
+    end
 
     -- 跨 Space 切换时焦点通知可能较晚；超时后不再把后续的手动
-    -- 切换误认为这次历史导航。
+    -- 切换误认为这次窗口环导航。
     hs.timer.doAfter(1.5, function()
-        if generation == historyFocusGeneration then
-            expectedHistoryFocusID = nil
+        if generation == ringFocusGeneration then
+            expectedRingFocusID = nil
         end
     end)
 end
@@ -219,6 +273,19 @@ end
 -- new(true) 不继承默认过滤器，因此 AXSheet 和应用自定义的
 -- modal subrole 也有机会产生焦点事件。不在此处做 Space 过滤。
 local focusHistoryFilter = hs.window.filter.new(true)
+
+-- 启动时把过滤器能看到的窗口全部纳入环；之后新建窗口也会补入。
+addWindowToFocusRing(lastFocusedWindow)
+for _, win in ipairs(focusHistoryFilter:getWindows()) do
+    addWindowToFocusRing(normalizeFocusedWindow(win))
+end
+focusRingIndex = findFocusRingIndex(windowIDIfValid(lastFocusedWindow)) or
+    focusRingIndex
+
+focusHistoryFilter:subscribe(hs.window.filter.windowCreated, function(win)
+    addWindowToFocusRing(normalizeFocusedWindow(win))
+end)
+
 focusHistoryFilter:subscribe(hs.window.filter.windowFocused, function(win)
     win = normalizeFocusedWindow(win)
     if not validWindow(win) then
@@ -226,20 +293,21 @@ focusHistoryFilter:subscribe(hs.window.filter.windowFocused, function(win)
     end
 
     local windowID = win:id()
-    if windowID == expectedHistoryFocusID then
-        expectedHistoryFocusID = nil
+    if windowID == expectedRingFocusID then
+        expectedRingFocusID = nil
+        focusRingIndex = findFocusRingIndex(windowID) or focusRingIndex
         lastFocusedWindow = win
         return
     end
 
-    -- 任何非历史导航的焦点变化都开始一条新路径，Alt+Shift+Z 随即失效。
-    historyFocusGeneration = historyFocusGeneration + 1
-    expectedHistoryFocusID = nil
-    if validWindow(lastFocusedWindow) and
-        lastFocusedWindow:id() ~= windowID then
-        pushFocusHistory(focusBackStack, lastFocusedWindow)
+    ringFocusGeneration = ringFocusGeneration + 1
+    expectedRingFocusID = nil
+    if windowIDIfValid(lastFocusedWindow) ~= windowID then
+        placeExternalFocusNextToSource(lastFocusedWindow, win)
+    else
+        addWindowToFocusRing(win)
+        focusRingIndex = findFocusRingIndex(windowID) or focusRingIndex
     end
-    focusForwardStack = {}
     lastFocusedWindow = win
 end)
 
@@ -972,19 +1040,11 @@ for slot, key in ipairs(keys) do
 end
 
 hs.hotkey.bind({ "alt" }, "z", function()
-    navigateFocusHistory(
-        focusBackStack,
-        focusForwardStack,
-        "There is no earlier window"
-    )
+    navigateFocusRing(1)
 end)
 
 hs.hotkey.bind({ "alt", "shift" }, "z", function()
-    navigateFocusHistory(
-        focusForwardStack,
-        focusBackStack,
-        "There is no later window"
-    )
+    navigateFocusRing(-1)
 end)
 
 hs.hotkey.bind({ "alt", "shift" }, "x", function()
